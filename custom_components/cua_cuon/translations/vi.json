@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cửa cuốn",
+        "description": "Chọn cảm biến đóng/mở của cửa cuốn (binary_sensor contact, hoặc cover) và kênh thông báo. Nếu cảm biến báo ngược (cửa đóng lại hiện 'Mở') thì bật 'Đảo trạng thái'.",
+        "data": {
+          "sensor": "Cảm biến cửa (binary_sensor / cover)",
+          "notify_service": "Dịch vụ thông báo (vd: notify.mobile_app_iphone)",
+          "invert": "Đảo trạng thái (cảm biến báo ngược)",
+          "alert_minutes": "Cảnh báo khi mở quá (phút, 0 = tắt)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Đã cấu hình rồi."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cấu hình Cửa cuốn",
+        "description": "Sửa cảm biến, kênh thông báo, ngưỡng cảnh báo và nội dung thông báo. Trong nội dung có thể chèn các biến (đặt trong ngoặc nhọn): time = giờ, date = ngày, duration = thời gian cửa đã mở.",
+        "data": {
+          "sensor": "Cảm biến cửa (binary_sensor / cover)",
+          "notify_service": "Dịch vụ thông báo (vd: notify.mobile_app_iphone)",
+          "invert": "Đảo trạng thái (cảm biến báo ngược)",
+          "alert_minutes": "Cảnh báo khi mở quá (phút, 0 = tắt)",
+          "repeat_minutes": "Nhắc lại mỗi (phút, 0 = chỉ nhắc 1 lần)",
+          "debounce": "Chống rung: giữ trạng thái đủ (giây) mới tính",
+          "msg_open": "Nội dung khi MỞ",
+          "msg_close": "Nội dung khi ĐÓNG",
+          "msg_alert": "Nội dung khi mở quá lâu"
+        }
+      }
+    }
+  }
+}

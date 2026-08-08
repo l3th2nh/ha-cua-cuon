@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rolling door",
+        "description": "Pick the door open/close sensor (a contact binary_sensor, or a cover) and the notification service. If the sensor reads backwards (shows 'Open' when the door is shut), turn on 'Invert state'.",
+        "data": {
+          "sensor": "Door sensor (binary_sensor / cover)",
+          "notify_service": "Notify service (e.g. notify.mobile_app_iphone)",
+          "invert": "Invert state (sensor reads backwards)",
+          "alert_minutes": "Alert when open longer than (minutes, 0 = off)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rolling door settings",
+        "description": "Change the sensor, notification channel, alert thresholds and message texts. Messages accept these variables (wrapped in curly braces): time, date, duration.",
+        "data": {
+          "sensor": "Door sensor (binary_sensor / cover)",
+          "notify_service": "Notify service (e.g. notify.mobile_app_iphone)",
+          "invert": "Invert state (sensor reads backwards)",
+          "alert_minutes": "Alert when open longer than (minutes, 0 = off)",
+          "repeat_minutes": "Repeat alert every (minutes, 0 = alert once)",
+          "debounce": "Debounce: state must hold for (seconds)",
+          "msg_open": "Message when OPENED",
+          "msg_close": "Message when CLOSED",
+          "msg_alert": "Message when open too long"
+        }
+      }
+    }
+  }
+}
