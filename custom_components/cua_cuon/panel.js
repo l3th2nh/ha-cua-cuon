@@ -87,6 +87,18 @@ h1{font-weight:700;font-size:20px;margin:0;letter-spacing:-.02em}
 .item.live .dur{color:var(--open);border-color:color-mix(in srgb,var(--open) 35%,var(--line))}
 .dur.long{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
 
+/* ---- sức khỏe cảm biến ---- */
+.health{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:11px 13px;margin:0 0 12px;
+  font-size:12.5px;line-height:1.55;color:var(--muted)}
+.health b{color:var(--text);font-weight:600}
+.health code{font-family:var(--mono);font-size:11.5px;background:var(--panel-2);border:1px solid var(--line);
+  border-radius:6px;padding:1px 6px;color:var(--accent)}
+.health .hd{display:flex;align-items:center;gap:7px;color:var(--text);font-weight:600;font-size:13px;margin-bottom:5px}
+.health.warn{border-color:color-mix(in srgb,var(--bad) 38%,var(--line));
+  background:color-mix(in srgb,var(--bad) 8%,var(--panel))}
+.health.warn .hd{color:var(--bad)}
+.health p{margin:6px 0 0}
+
 .empty{text-align:center;padding:56px 20px;color:var(--faint)}
 .empty .big{font-size:44px;opacity:.5}
 .empty h3{color:var(--muted);font-weight:600;margin:14px 0 6px;font-size:17px}
@@ -131,6 +143,7 @@ class CuaCuonPanel extends HTMLElement {
         <div><h1>🚪 Cửa cuốn</h1><span class="sub">Nhật ký đóng/mở + thời lượng</span></div>
       </div>
       <div id="hero"></div>
+      <div id="health"></div>
       <div id="stats"></div>
       <div class="bar">
         <span class="count" id="count">—</span>
@@ -261,6 +274,40 @@ class CuaCuonPanel extends HTMLElement {
     </div>`;
   }
 
+  /**
+   * Thẻ "sức khỏe cảm biến": HA đang thấy cảm biến ở trạng thái nào và nhận tin lần cuối lúc nào.
+   * Nếu mốc này CŨ HƠN log trong app SmartLife -> lỗi nằm ở đường truyền vào HA
+   * (Matter/Tuya), không phải ở tích hợp này.
+   */
+  _renderHealth() {
+    const d = this._data;
+    if (!d.sensor) return "";
+    const raw = d.sensor_state;
+    const dead = raw == null || raw === "unavailable" || raw === "unknown";
+    const changed = d.sensor_changed ? new Date(d.sensor_changed) : null;
+    const stale = changed ? (Date.now() - changed.getTime()) / 3600000 : null; // giờ
+    const warn = dead || (stale != null && stale >= 12);
+    const two = (n) => String(n).padStart(2, "0");
+    const stamp = changed
+      ? `${two(changed.getHours())}:${two(changed.getMinutes())}:${two(changed.getSeconds())} ${two(changed.getDate())}/${two(changed.getMonth() + 1)}`
+      : "—";
+    const label = dead ? "MẤT KẾT NỐI" : raw === "on" ? "mở" : raw === "off" ? "đóng" : raw;
+
+    return `<div class="health${warn ? " warn" : ""}">
+      <div class="hd">${warn ? "⚠" : "📡"} Cảm biến</div>
+      <code>${d.sensor}</code> · trạng thái HA đang thấy: <b>${label}</b><br>
+      HA nhận tin lần cuối: <b>${stamp}</b>${changed ? ` · ${this._rel(d.sensor_changed)}` : ""}
+      ${d.patched ? `<p>🔁 Đã tự vá <b>${d.patched}</b> lần lệch trạng thái.</p>` : ""}
+      ${
+        warn
+          ? `<p>Nếu app SmartLife có log mới hơn mốc trên thì <b>sự kiện không vào tới HA</b> —
+             lỗi ở tích hợp đưa cảm biến vào HA (Matter/Zemismart hoặc Tuya cloud), không phải ở
+             màn hình này. Thử: Settings → Devices &amp; Services → tích hợp đó → <b>Reload</b>.</p>`
+          : ""
+      }
+    </div>`;
+  }
+
   _renderStats() {
     const today = this._dayKey(new Date().toISOString());
     const list = (this._data.sessions || []).filter((s) => this._dayKey(s.open) === today);
@@ -298,6 +345,7 @@ class CuaCuonPanel extends HTMLElement {
     const sessions = this._data.sessions || [];
     const n = sessions.length;
     this.$("#hero").innerHTML = this._renderHero();
+    this.$("#health").innerHTML = this._renderHealth();
     this.$("#stats").innerHTML = this._renderStats();
     this.$("#count").innerHTML = n
       ? `Nhật ký: <b>${n}</b> lượt gần nhất`
@@ -336,5 +384,5 @@ class CuaCuonPanel extends HTMLElement {
 if (!customElements.get("cua-cuon-panel")) {
   customElements.define("cua-cuon-panel", CuaCuonPanel);
 }
-console.info("%c CỬA CUỐN %c panel v1 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
+console.info("%c CỬA CUỐN %c panel v2 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
   "background:#26507f;color:#fff;border-radius:0 4px 4px 0;padding:2px 6px");

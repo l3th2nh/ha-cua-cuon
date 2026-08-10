@@ -23,6 +23,7 @@ from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_time,
     async_track_state_change_event,
+    async_track_time_interval,
 )
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -52,9 +53,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL = "/cua_cuon/panel.js"
-PANEL_VER = "1"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
+PANEL_VER = "2"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
 PANEL_URL_V = f"{PANEL_URL}?v={PANEL_VER}"
 PANEL_PATH = "cua-cuon"
+
+# Lưới an toàn: cứ mỗi chu kỳ này lại đối chiếu trạng thái thật của cảm biến với trạng thái
+# tích hợp đang giữ. Nếu lệch (sự kiện state_changed bị lọt) thì vá lại ngay.
+POLL_INTERVAL = timedelta(seconds=60)
 
 STATE_CLOSED = ("off", "closed")
 STATE_OPEN = ("on", "open", "opening", "closing")
@@ -309,10 +314,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["ready"] = True
         _LOGGER.debug("Cửa cuốn: đồng bộ trạng thái đầu -> %s", "MỞ" if data["open"] else "ĐÓNG")
 
+    @callback
+    def _poll(_now: datetime) -> None:
+        """Lưới an toàn: đối chiếu định kỳ, vá lại nếu sự kiện state_changed bị lọt."""
+        if not data.get("ready") or not sensor_id:
+            return
+        if data.get("debounce_cancel"):
+            return  # đang trong thời gian chống rung -> để nó xử lý
+        state = hass.states.get(sensor_id)
+        if state is None:
+            return
+        value = _read_open(state.state)
+        if value is None or value == data.get("open"):
+            return
+        changed = state.last_changed or dt_util.utcnow()
+        if (dt_util.utcnow() - changed).total_seconds() < max(debounce, 5):
+            return  # vừa mới đổi -> nhường cho luồng sự kiện thường
+        _LOGGER.warning(
+            "Cửa cuốn: lệch trạng thái (sự kiện bị lọt) — cảm biến '%s' đang '%s' từ %s, "
+            "tích hợp đang giữ '%s'. Vá lại nhật ký.",
+            sensor_id,
+            state.state,
+            changed.isoformat(),
+            "MỞ" if data.get("open") else "ĐÓNG",
+        )
+        data["patched"] = int(data.get("patched", 0)) + 1
+        hass.async_create_task(_apply(value, changed, notify=True))
+
     if sensor_id:
         entry.async_on_unload(
             async_track_state_change_event(hass, [sensor_id], _on_state)
         )
+        entry.async_on_unload(async_track_time_interval(hass, _poll, POLL_INTERVAL))
 
     if hass.is_running:
         await _sync_initial()
@@ -356,14 +389,21 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def ws_get_log(hass: HomeAssistant, connection, msg) -> None:
     data = hass.data.get(DOMAIN, {})
     opened_at = data.get("open_at")
+    sensor_id = data.get("sensor")
+    state = hass.states.get(sensor_id) if sensor_id else None
     connection.send_result(
         msg["id"],
         {
             "sessions": data.get("log", {}).get("sessions", []),
             "open": bool(data.get("open")),
             "open_at": opened_at.isoformat() if opened_at else None,
-            "sensor": data.get("sensor"),
+            "sensor": sensor_id,
             "alert_minutes": data.get("alert_minutes"),
+            # "sức khỏe" cảm biến: cho biết HA CÓ đang nhận tin từ cảm biến hay không
+            "sensor_state": state.state if state else None,
+            "sensor_changed": state.last_changed.isoformat() if state else None,
+            "sensor_updated": state.last_updated.isoformat() if state else None,
+            "patched": int(data.get("patched", 0)),
         },
     )
 

@@ -63,6 +63,21 @@ Mở quá lâu: ⏰ Cửa cuốn đã mở {duration} mà chưa đóng!
   (nếu cửa đang mở thì giữ lại lượt đang mở để vẫn tính đúng thời lượng).
 - Nhật ký giữ **500 lượt gần nhất**.
 
+## Không thấy log / không có thông báo? (chẩn đoán)
+
+Panel có sẵn thẻ **📡 Cảm biến** hiển thị *"HA nhận tin lần cuối lúc mấy giờ"*. So mốc đó với log
+trong app SmartLife:
+
+| Hiện tượng | Nghĩa là | Cách xử lý |
+|---|---|---|
+| Mốc trong panel **cũ hơn** log SmartLife | **Sự kiện không vào tới HA** — cảm biến & hub vẫn tốt, nhưng tích hợp đưa cảm biến vào HA (Matter/Zemismart M6 hoặc Tuya cloud) đã ngừng đẩy | Settings → Devices & Services → tích hợp đó → **Reload**. Nếu tái diễn: đổi sang đường vào khác (Matter ↔ Tuya cloud) hoặc dùng LocalTuya |
+| Thẻ báo **MẤT KẾT NỐI** | Entity `unavailable`/`unknown` | Kiểm tra pin cảm biến, hub, mạng |
+| Mốc **khớp** SmartLife nhưng nhật ký vẫn thiếu | Lỗi ở tích hợp này | Bật log: thêm vào `configuration.yaml` → `logger: logs: custom_components.cua_cuon: debug` rồi gửi log |
+
+Từ **v1.1.0** tích hợp có **lưới an toàn**: mỗi 60 giây đối chiếu trạng thái thật của cảm biến với
+trạng thái đang giữ; nếu lệch (sự kiện `state_changed` bị lọt) thì **tự vá nhật ký + gửi thông báo**,
+đồng thời ghi cảnh báo vào log HA. Số lần đã vá hiện ngay trên thẻ **📡 Cảm biến**.
+
 ## Cập nhật
 Có bản mới → HACS báo **Update** (hoặc `git pull` nếu chép tay). Không cần cấu hình lại.
 
