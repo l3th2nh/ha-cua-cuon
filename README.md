@@ -78,6 +78,23 @@ Từ **v1.1.0** tích hợp có **lưới an toàn**: mỗi 60 giây đối chi�
 trạng thái đang giữ; nếu lệch (sự kiện `state_changed` bị lọt) thì **tự vá nhật ký + gửi thông báo**,
 đồng thời ghi cảnh báo vào log HA. Số lần đã vá hiện ngay trên thẻ **📡 Cảm biến**.
 
+## Hành trình bị hở — chốt tay bằng cách vuốt trái (v1.2.0)
+
+Mất wifi / cảm biến lag / pin yếu → có khi **tín hiệu đóng không tới HA**, lượt đó treo mãi ở
+*"đang mở"*, giờ mở cứ chạy tiếp và cảnh báo nhắc lặp lại không dừng.
+
+Dòng bị hở được đánh dấu **viền nét đứt** kèm chữ *"← vuốt để chốt"*. **Vuốt dòng đó sang trái**
+(trên máy tính thì kéo chuột) → lộ nút **✓ Kết thúc hành trình**. Bấm vào:
+
+- Thiếu **điểm cuối** → đóng lại tại `giờ mở + 60 giây`.
+- Thiếu **điểm đầu** → mở tại `giờ đóng − 60 giây`.
+- Nếu đó là lượt đang treo → **cửa được coi như đã đóng**: thẻ trạng thái về *ĐÃ ĐÓNG* và
+  **cảnh báo nhắc lặp dừng ngay**.
+
+Lượt đã chốt tay mang nhãn **✍ chốt tay** — để sau này nhìn lại còn biết thời lượng đó là **ước
+lượng**, không phải đo thật. Lưới an toàn 60 giây cũng được dặn **không mở lại** lượt vừa chốt
+(cho tới khi cảm biến thật sự gửi trạng thái mới), nên bấm một lần là yên.
+
 ## Cập nhật
 Có bản mới → HACS báo **Update** (hoặc `git pull` nếu chép tay). Không cần cấu hình lại.
 

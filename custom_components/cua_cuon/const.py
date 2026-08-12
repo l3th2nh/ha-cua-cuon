@@ -24,3 +24,6 @@ NOTIFY_TITLE = "🚪 Cửa cuốn"
 NOTIFY_TAG = "cua-cuon"   # cùng 1 tag -> thông báo mới THAY thông báo cũ (không dồn đống)
 
 MAX_LOG = 500             # số lượt mở/đóng lưu tối đa
+
+# Chốt tay 1 lượt bị thiếu điểm đầu/cuối (cảm biến lọt tín hiệu): bù thêm/bớt bấy nhiêu giây.
+MANUAL_GAP_SECONDS = 60

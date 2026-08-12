@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_MSG_OPEN,
     DEFAULT_REPEAT_MINUTES,
     DOMAIN,
+    MANUAL_GAP_SECONDS,
     MAX_LOG,
     NOTIFY_TAG,
     NOTIFY_TITLE,
@@ -53,7 +54,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL = "/cua_cuon/panel.js"
-PANEL_VER = "2"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
+PANEL_VER = "3"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
 PANEL_URL_V = f"{PANEL_URL}?v={PANEL_VER}"
 PANEL_PATH = "cua-cuon"
 
@@ -112,6 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["ws_registered"] = True
         websocket_api.async_register_command(hass, ws_get_log)
         websocket_api.async_register_command(hass, ws_clear_log)
+        websocket_api.async_register_command(hass, ws_finish)
 
     # Cấu hình hiệu lực = data (lúc cài) chồng bởi options (sửa sau qua Configure)
     conf = {**entry.data, **entry.options}
@@ -221,6 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _apply(is_open: bool, when: datetime, notify: bool = True) -> None:
         """Chốt 1 lần chuyển trạng thái: cập nhật nhật ký, thông báo, hẹn cảnh báo."""
         data["open"] = is_open
+        data.pop("manual_ack", None)  # có chuyển trạng thái thật -> bỏ ghi nhớ chốt tay
         sessions = data["log"].setdefault("sessions", [])
 
         if is_open:
@@ -240,6 +243,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     seconds = max(0.0, (when - started).total_seconds())
                 sessions[0]["close"] = when.isoformat()
                 sessions[0]["dur"] = round(seconds) if seconds is not None else None
+            else:
+                # Không có lượt mở nào đang treo (tín hiệu MỞ bị lọt) -> vẫn ghi 1 lượt
+                # thiếu điểm đầu, để nhìn thấy trên nhật ký và vuốt trái chốt tay được.
+                sessions.insert(0, {"close": when.isoformat()})
+                del sessions[MAX_LOG:]
             data["open_at"] = None
             _LOGGER.info("Cửa cuốn: ĐÓNG lúc %s (mở %s)", when.isoformat(), fmt_duration(seconds))
             if notify:
@@ -324,6 +332,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         state = hass.states.get(sensor_id)
         if state is None:
             return
+        ack = data.get("manual_ack")
+        if ack is not None and state.last_changed == ack:
+            return  # người dùng đã chốt tay lượt này; cảm biến vẫn kẹt ở trạng thái cũ -> đừng mở lại
         value = _read_open(state.state)
         if value is None or value == data.get("open"):
             return
@@ -406,6 +417,73 @@ async def ws_get_log(hass: HomeAssistant, connection, msg) -> None:
             "patched": int(data.get("patched", 0)),
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "cua_cuon/finish",
+        vol.Required("key"): str,  # mốc 'open' (hoặc 'close' nếu lượt thiếu điểm đầu)
+    }
+)
+@websocket_api.async_response
+async def ws_finish(hass: HomeAssistant, connection, msg) -> None:
+    """Chốt tay 1 lượt bị hở vì cảm biến lọt tín hiệu (mất wifi, lag...).
+
+    Thiếu điểm cuối -> đóng lại tại `mở + 60s`; thiếu điểm đầu -> mở tại `đóng - 60s`.
+    Nếu đó là lượt đang treo thì coi như cửa đã đóng: tắt cảnh báo lặp và đưa panel về ĐÃ ĐÓNG.
+    """
+    data = hass.data.get(DOMAIN, {})
+    log = data.get("log", {"sessions": []})
+    key = msg["key"]
+
+    target = next(
+        (s for s in log.get("sessions", []) if key in (s.get("open"), s.get("close"))),
+        None,
+    )
+    if target is None:
+        connection.send_result(msg["id"], {"ok": False, "reason": "not_found"})
+        return
+
+    gap = timedelta(seconds=MANUAL_GAP_SECONDS)
+    was_pending = bool(target.get("open")) and not target.get("close")
+
+    if was_pending:
+        started = dt_util.parse_datetime(target["open"])
+        if started is None:
+            connection.send_result(msg["id"], {"ok": False, "reason": "bad_time"})
+            return
+        target["close"] = (started + gap).isoformat()
+    elif target.get("close") and not target.get("open"):
+        ended = dt_util.parse_datetime(target["close"])
+        if ended is None:
+            connection.send_result(msg["id"], {"ok": False, "reason": "bad_time"})
+            return
+        target["open"] = (ended - gap).isoformat()
+    else:
+        connection.send_result(msg["id"], {"ok": False, "reason": "complete"})
+        return
+
+    target["dur"] = MANUAL_GAP_SECONDS
+    target["manual"] = True   # đánh dấu: thời lượng này là ước lượng, không phải đo thật
+    target.pop("alerts", None)
+
+    # Lượt đang treo -> coi như cửa đã đóng
+    if was_pending and data.get("open"):
+        data["open"] = False
+        data["open_at"] = None
+        cancel = data.pop("alert_cancel", None)
+        if cancel:
+            cancel()
+        sensor_id = data.get("sensor")
+        state = hass.states.get(sensor_id) if sensor_id else None
+        # Ghi nhớ mốc trạng thái đang kẹt -> lưới an toàn 60s không mở lại lượt vừa chốt
+        data["manual_ack"] = state.last_changed if state else None
+        _LOGGER.info("Cửa cuốn: chốt tay lượt đang treo (%s) -> coi như ĐÃ ĐÓNG", key)
+
+    store: Store = data.get("store")
+    if store:
+        await store.async_save(log)
+    connection.send_result(msg["id"], {"ok": True})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "cua_cuon/clear_log"})

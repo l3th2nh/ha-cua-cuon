@@ -80,8 +80,24 @@ h1{font-weight:700;font-size:20px;margin:0;letter-spacing:-.02em}
 .times{font-weight:600;font-size:14.5px;line-height:1.3;font-family:var(--mono)}
 .times .arrow{color:var(--faint);margin:0 6px;font-family:var(--font)}
 .times .now{color:var(--open);font-family:var(--font);font-weight:600}
+.times .miss{color:var(--faint)}
 .rel{font-size:11.5px;color:var(--faint);margin-top:3px;font-family:var(--mono)}
 .rel .flag{color:var(--bad)}
+.rel .manual{color:var(--accent)}
+.rel .swipehint{color:var(--open)}
+.item.gap{border-style:dashed;border-color:var(--line-strong)}
+
+/* ---- vuốt sang trái để chốt hành trình bị hở ---- */
+.swipe{position:relative;overflow:hidden;border-radius:var(--radius);touch-action:pan-y}
+.swipe .item{position:relative;z-index:1;transition:transform .18s ease;will-change:transform;
+  -webkit-user-select:none;user-select:none}
+.swipe.open .item{transform:translateX(-138px)}
+.swipe-act{position:absolute;top:0;right:0;bottom:0;width:138px;border:0;border-radius:var(--radius);
+  background:color-mix(in srgb,var(--closed) 24%,var(--panel-2));color:var(--closed);cursor:pointer;
+  font-family:inherit;font-size:12.5px;font-weight:700;line-height:1.35;padding:0 10px;
+  display:flex;align-items:center;justify-content:center;gap:7px}
+.swipe-act:hover{background:color-mix(in srgb,var(--closed) 36%,var(--panel-2))}
+.swipe-act b{font-size:17px;font-weight:700}
 .dur{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);background:var(--panel-2);
   border:1px solid var(--line);border-radius:10px;padding:7px 10px;flex:none;white-space:nowrap}
 .item.live .dur{color:var(--open);border-color:color-mix(in srgb,var(--open) 35%,var(--line))}
@@ -106,6 +122,8 @@ h1{font-weight:700;font-size:20px;margin:0;letter-spacing:-.02em}
 .warnbox{background:color-mix(in srgb,var(--bad) 10%,var(--panel));border:1px solid color-mix(in srgb,var(--bad) 30%,var(--line));
   border-radius:12px;padding:10px 13px;margin:0 0 14px;font-size:12.5px;line-height:1.5}
 </style>`;
+
+const SWIPE_W = 138;  // bề rộng nút lộ ra khi vuốt trái (khớp CSS .swipe-act)
 
 const GARAGE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l9-5 9 5v12"/><path d="M6 21v-8h12v8"/><path d="M6 16h12M6 18.5h12"/></svg>`;
 const OPEN_IC = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l9-5 9 5v12"/><path d="M6 21v-5h12v5"/><path d="M6 16h12"/></svg>`;
@@ -160,6 +178,69 @@ class CuaCuonPanel extends HTMLElement {
     );
     this.$("#refresh").addEventListener("click", () => this._load());
     this.$("#clear").addEventListener("click", () => this._clear());
+    this.$("#view").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-finish]");
+      if (btn) this._finish(btn.getAttribute("data-finish"));
+    });
+    this._wireSwipe();
+  }
+
+  /** Vuốt trái trên 1 dòng bị hở -> lộ nút "Kết thúc hành trình". */
+  _wireSwipe() {
+    const view = this.$("#view");
+    let box = null, x0 = 0, y0 = 0, axis = null, dx = 0;
+
+    view.addEventListener("pointerdown", (e) => {
+      const wrap = e.target.closest(".swipe");
+      if (!wrap || e.target.closest(".swipe-act")) return;
+      box = wrap; x0 = e.clientX; y0 = e.clientY; axis = null; dx = 0;
+      try { view.setPointerCapture(e.pointerId); } catch {}  // giữ mạch vuốt khi ngón đi ra ngoài
+    });
+
+    view.addEventListener("pointermove", (e) => {
+      if (!box) return;
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (axis === null) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        axis = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+        if (axis === "y") { box = null; return; }  // cuộn dọc -> nhả ra cho trang cuộn
+        box.querySelector(".item").style.transition = "none";
+      }
+      const base = box.classList.contains("open") ? -SWIPE_W : 0;
+      dx = Math.max(-SWIPE_W, Math.min(0, base + mx));
+      box.querySelector(".item").style.transform = `translateX(${dx}px)`;
+    });
+
+    const release = () => {
+      if (!box) return;
+      const item = box.querySelector(".item");
+      item.style.transition = "";
+      item.style.transform = "";
+      if (axis === "x") {
+        const opened = dx < -SWIPE_W / 2;
+        this._closeSwipes(opened ? box : null);
+        box.classList.toggle("open", opened);
+      }
+      box = null; axis = null;
+    };
+    view.addEventListener("pointerup", release);
+    view.addEventListener("pointercancel", release);
+    view.addEventListener("pointerleave", release);
+  }
+
+  _closeSwipes(keep) {
+    this.shadowRoot.querySelectorAll(".swipe.open").forEach((n) => {
+      if (n !== keep) n.classList.remove("open");
+    });
+  }
+  _swipeBusy() { return !!this.shadowRoot.querySelector(".swipe.open"); }
+
+  async _finish(key) {
+    try {
+      await this._hass.connection.sendMessagePromise({ type: "cua_cuon/finish", key });
+    } catch {}
+    this._closeSwipes(null);
+    await this._load();
   }
 
   async _init() {
@@ -167,7 +248,8 @@ class CuaCuonPanel extends HTMLElement {
     await this._load();
     if (this._poll) clearInterval(this._poll);
     if (this._tick) clearInterval(this._tick);
-    this._poll = setInterval(() => this._load(), 5000);
+    // đang lộ nút "Kết thúc hành trình" thì hoãn tự làm mới, kẻo vẽ lại làm mất nút
+    this._poll = setInterval(() => { if (!this._swipeBusy()) this._load(); }, 5000);
     this._tick = setInterval(() => this._live(), 1000);   // đồng hồ chạy cho lượt đang mở
   }
 
@@ -228,12 +310,18 @@ class CuaCuonPanel extends HTMLElement {
   /** Thời lượng 1 lượt: đã đóng -> dur đã lưu; đang mở -> tính tới bây giờ. */
   _seconds(s) {
     if (typeof s.dur === "number") return s.dur;
+    if (!s.open) return null;               // hở điểm đầu -> không tính được
     const start = new Date(s.open).getTime();
     if (isNaN(start)) return null;
     const end = s.close ? new Date(s.close).getTime() : Date.now();
     return Math.max(0, (end - start) / 1000);
   }
-  _isLive(s) { return !s.close; }
+  /** Mốc đại diện của 1 lượt (dùng để sắp nhóm theo ngày và làm khóa). */
+  _key(s) { return s.open || s.close; }
+  /** Lượt bị hở: thiếu điểm đầu hoặc điểm cuối -> cho phép vuốt trái chốt tay. */
+  _gap(s) { return !s.open || !s.close; }
+  /** Lượt đang mở thật (dòng đầu + tích hợp đang báo mở). */
+  _isLive(s, index) { return index === 0 && !!this._data.open && !!s.open && !s.close; }
 
   // ---------- cập nhật đồng hồ mỗi giây (không vẽ lại cả trang) ----------
   _live() {
@@ -310,7 +398,7 @@ class CuaCuonPanel extends HTMLElement {
 
   _renderStats() {
     const today = this._dayKey(new Date().toISOString());
-    const list = (this._data.sessions || []).filter((s) => this._dayKey(s.open) === today);
+    const list = (this._data.sessions || []).filter((s) => this._dayKey(this._key(s)) === today);
     const durs = list.map((s) => this._seconds(s)).filter((v) => v != null);
     const total = durs.reduce((a, b) => a + b, 0);
     const max = durs.length ? Math.max(...durs) : null;
@@ -322,22 +410,38 @@ class CuaCuonPanel extends HTMLElement {
   }
 
   _renderRow(s, index, total) {
-    const live = this._isLive(s);
+    const live = this._isLive(s, index);
+    const gap = this._gap(s);
+    const key = this._key(s);
     const secs = this._seconds(s);
     const alertMin = Number(this._data.alert_minutes || 0);
     const long = alertMin > 0 && secs != null && secs >= alertMin * 60;
-    const alerts = Number(s.alerts || 0);
-    return `<div class="item${live ? " live" : ""}">
+
+    const from = s.open ? this._hm(s.open) : `<span class="miss">—</span>`;
+    const to = s.close
+      ? this._hm(s.close)
+      : live
+      ? `<span class="now">đang mở</span>`
+      : `<span class="miss">—</span>`;
+
+    const notes = [`#${total - index}`, this._rel(key)];
+    if (Number(s.alerts)) notes.push(`<span class="flag">⏰ ${s.alerts} lần nhắc</span>`);
+    if (s.manual) notes.push(`<span class="manual">✍ chốt tay</span>`);
+    else if (gap) notes.push(`<span class="swipehint">← vuốt để chốt</span>`);
+
+    const item = `<div class="item${live ? " live" : ""}${gap && !live ? " gap" : ""}">
       <div class="ic">${live ? OPEN_IC : GARAGE}</div>
       <div class="meta">
-        <div class="times">${this._hm(s.open)}<span class="arrow">→</span>${
-          live ? `<span class="now">đang mở</span>` : this._hm(s.close)
-        }</div>
-        <div class="rel">#${total - index} · ${this._rel(s.open)}${
-          alerts ? ` · <span class="flag">⏰ ${alerts} lần nhắc</span>` : ""
-        }</div>
+        <div class="times">${from}<span class="arrow">→</span>${to}</div>
+        <div class="rel">${notes.join(" · ")}</div>
       </div>
       <span class="dur${long ? " long" : ""}">${this._dur(secs)}</span>
+    </div>`;
+
+    if (!gap) return item;
+    return `<div class="swipe" data-key="${key}">
+      <button class="swipe-act" data-finish="${key}"><b>✓</b><span>Kết thúc<br>hành trình</span></button>
+      ${item}
     </div>`;
   }
 
@@ -363,11 +467,13 @@ class CuaCuonPanel extends HTMLElement {
     // gom nhóm theo ngày (danh sách đã sắp mới nhất trước)
     const groups = [];
     sessions.forEach((s, i) => {
-      const key = this._dayKey(s.open);
+      const key = this._dayKey(this._key(s));
       let g = groups[groups.length - 1];
       if (!g || g.key !== key) groups.push((g = { key, rows: [] }));
       g.rows.push({ s, i });
     });
+
+    const wasOpen = [...this.shadowRoot.querySelectorAll(".swipe.open")].map((el) => el.dataset.key);
 
     view.innerHTML = groups
       .map((g) => {
@@ -378,11 +484,17 @@ class CuaCuonPanel extends HTMLElement {
           <div class="list">${g.rows.map((r) => this._renderRow(r.s, r.i, n)).join("")}</div>`;
       })
       .join("");
+
+    // giữ nguyên dòng đang lộ nút sau khi vẽ lại
+    wasOpen.forEach((k) => {
+      const el = this.shadowRoot.querySelector(`.swipe[data-key="${CSS.escape(k)}"]`);
+      if (el) el.classList.add("open");
+    });
   }
 }
 
 if (!customElements.get("cua-cuon-panel")) {
   customElements.define("cua-cuon-panel", CuaCuonPanel);
 }
-console.info("%c CỬA CUỐN %c panel v2 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
+console.info("%c CỬA CUỐN %c panel v3 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
   "background:#26507f;color:#fff;border-radius:0 4px 4px 0;padding:2px 6px");
