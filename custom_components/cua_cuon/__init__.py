@@ -55,7 +55,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL = "/cua_cuon/panel.js"
-PANEL_VER = "4"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
+PANEL_VER = "5"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
 PANEL_URL_V = f"{PANEL_URL}?v={PANEL_VER}"
 PANEL_PATH = "cua-cuon"
 
@@ -390,15 +390,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         entry.async_on_unload(async_track_time_interval(hass, _poll, POLL_INTERVAL))
 
+    @callback
+    def _on_ha_started(_event: Event) -> None:
+        """BẮT BUỘC có @callback.
+
+        Trước đây chỗ này là một `lambda` trần. HA nhìn hàm không có @callback thì xếp nó
+        vào loại "executor job" và chạy trong LUỒNG KHÁC, mà `hass.async_create_task` thì
+        không dùng được ngoài vòng lặp sự kiện -> `_sync_initial()` KHÔNG BAO GIỜ chạy ->
+        `data["ready"]` kẹt ở False -> `_on_state` thoát ngay ở dòng đầu -> tích hợp ĐIẾC
+        HOÀN TOÀN sau mỗi lần khởi động lại HA (vẫn nạp được, panel vẫn mở, notify thử vẫn
+        chạy — chỉ là không xử lý sự kiện đóng/mở nào).
+        """
+        hass.async_create_task(_sync_initial())
+
+    @callback
+    def _ensure_ready(_now: datetime) -> None:
+        """Chốt chặn: 2 phút sau khi nạp mà vẫn chưa đồng bộ thì tự làm, đừng điếc vĩnh viễn."""
+        if not data.get("ready"):
+            _LOGGER.warning(
+                "Cửa cuốn: chưa đồng bộ được trạng thái đầu sau 2 phút — tự đồng bộ lại"
+            )
+            hass.async_create_task(_sync_initial())
+
     if hass.is_running:
         await _sync_initial()
     else:
         entry.async_on_unload(
-            hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STARTED,
-                lambda _e: hass.async_create_task(_sync_initial()),
-            )
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
         )
+        entry.async_on_unload(async_call_later(hass, 120, _ensure_ready))
 
     @callback
     def _cleanup() -> None:

@@ -78,6 +78,23 @@ Từ **v1.1.0** tích hợp có **lưới an toàn**: mỗi 60 giây đối chi�
 trạng thái đang giữ; nếu lệch (sự kiện `state_changed` bị lọt) thì **tự vá nhật ký + gửi thông báo**,
 đồng thời ghi cảnh báo vào log HA. Số lần đã vá hiện ngay trên thẻ **📡 Cảm biến**.
 
+## ⚠️ Bắt buộc nâng lên v1.4.0 — lỗi "điếc sau khi khởi động lại HA"
+
+Mọi bản **trước v1.4.0** dính một lỗi nặng: sau **mỗi lần khởi động lại Home Assistant**, tích hợp
+**ngừng xử lý toàn bộ sự kiện đóng/mở** — không ghi nhật ký, không gửi thông báo. Nó vẫn nạp bình
+thường, panel vẫn mở được, gửi thử thông báo vẫn chạy, nên **nhìn từ ngoài y như đang hoạt động**.
+Chỉ khi **nạp lại tích hợp** (Reload / bấm Gửi đi trong Configure) nó mới sống lại — tới lần khởi
+động lại HA kế tiếp.
+
+**Nguyên nhân:** chỗ chờ sự kiện `homeassistant_started` truyền vào một `lambda` trần. HA thấy hàm
+không có `@callback` thì xếp vào loại *executor job* và chạy ở **luồng khác**, mà
+`hass.async_create_task` lại không dùng được ngoài vòng lặp sự kiện → hàm đồng bộ trạng thái đầu
+không bao giờ chạy → cờ `ready` kẹt ở `False` → mọi sự kiện bị bỏ ngay dòng đầu.
+
+**Đã sửa:** dùng hàm có `@callback`, cộng thêm **chốt chặn**: 2 phút sau khi nạp mà vẫn chưa đồng
+bộ được thì tự đồng bộ lại và ghi cảnh báo vào log. Panel cũng hiện **băng đỏ "Tích hợp chưa đồng
+bộ xong"** nếu tình trạng này còn xảy ra.
+
 ## Có ghi nhật ký nhưng KHÔNG có thông báo? (v1.3.0)
 
 Panel có thẻ **🔔 Thông báo** cho biết: dịch vụ `notify.*` đang cấu hình **còn tồn tại trong HA

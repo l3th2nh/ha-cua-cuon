@@ -103,6 +103,10 @@ h1{font-weight:700;font-size:20px;margin:0;letter-spacing:-.02em}
 .item.live .dur{color:var(--open);border-color:color-mix(in srgb,var(--open) 35%,var(--line))}
 .dur.long{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
 
+.alert{background:color-mix(in srgb,var(--bad) 16%,var(--panel));border:1px solid var(--bad);
+  border-radius:13px;padding:12px 14px;margin:0 0 12px;font-size:13px;line-height:1.55;color:var(--text)}
+.alert b{color:var(--bad)}
+
 /* ---- sức khỏe cảm biến ---- */
 .health{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:11px 13px;margin:0 0 12px;
   font-size:12.5px;line-height:1.55;color:var(--muted)}
@@ -166,6 +170,7 @@ class CuaCuonPanel extends HTMLElement {
         <button class="menu" title="Menu">&#9776;</button>
         <div><h1>🚪 Cửa cuốn</h1><span class="sub">Nhật ký đóng/mở + thời lượng</span></div>
       </div>
+      <div id="alert"></div>
       <div id="hero"></div>
       <div id="health"></div>
       <div id="notify"></div>
@@ -527,6 +532,12 @@ class CuaCuonPanel extends HTMLElement {
   _render() {
     const sessions = this._data.sessions || [];
     const n = sessions.length;
+    this.$("#alert").innerHTML =
+      this._data.ready === false
+        ? `<div class="alert">⛔ <b>Tích hợp chưa đồng bộ xong</b> — nó đang <b>KHÔNG xử lý</b>
+             sự kiện đóng/mở nào, nên nhật ký lẫn thông báo đều đứng im.<br>
+             Xử lý: Settings → Devices &amp; Services → <b>Cửa cuốn</b> → ⋮ → <b>Reload</b>.</div>`
+        : "";
     this.$("#hero").innerHTML = this._renderHero();
     this.$("#health").innerHTML = this._renderHealth();
     this.$("#notify").innerHTML = this._renderNotify();
@@ -576,5 +587,5 @@ class CuaCuonPanel extends HTMLElement {
 if (!customElements.get("cua-cuon-panel")) {
   customElements.define("cua-cuon-panel", CuaCuonPanel);
 }
-console.info("%c CỬA CUỐN %c panel v4 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
+console.info("%c CỬA CUỐN %c panel v5 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
   "background:#26507f;color:#fff;border-radius:0 4px 4px 0;padding:2px 6px");
