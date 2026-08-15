@@ -78,6 +78,23 @@ Từ **v1.1.0** tích hợp có **lưới an toàn**: mỗi 60 giây đối chi�
 trạng thái đang giữ; nếu lệch (sự kiện `state_changed` bị lọt) thì **tự vá nhật ký + gửi thông báo**,
 đồng thời ghi cảnh báo vào log HA. Số lần đã vá hiện ngay trên thẻ **📡 Cảm biến**.
 
+## Có ghi nhật ký nhưng KHÔNG có thông báo? (v1.3.0)
+
+Panel có thẻ **🔔 Thông báo** cho biết: dịch vụ `notify.*` đang cấu hình **còn tồn tại trong HA
+không**, **lần gửi gần nhất** lúc mấy giờ, thành công hay lỗi gì, kèm nút **🔔 Gửi thử**.
+
+| Thẻ báo | Nghĩa là | Cách xử lý |
+|---|---|---|
+| *KHÔNG CÒN dịch vụ này trong HA* | Điện thoại đăng ký lại (cài lại app, đổi tên máy, đăng xuất/đăng nhập) → **tên dịch vụ đã đổi** | **Configure** → chọn lại đúng `notify.mobile_app_…` đang có |
+| Lần gửi cuối **THẤT BẠI** + dòng lỗi đỏ | HA có gọi nhưng dịch vụ trả lỗi | Đọc dòng lỗi; thường là thiết bị hết đăng ký hoặc máy chủ đẩy từ chối → đăng nhập lại app HA trên điện thoại |
+| Gửi thử báo **thành công** nhưng điện thoại im | HA đã làm xong phần của nó | Lỗi phía máy: quyền thông báo, chế độ Tập trung/Focus, tiết kiệm pin, tắt tiếng thông báo của app HA |
+| *chưa gửi lần nào* dù cửa có đóng/mở | Tích hợp **không gọi** notify | Xem thẻ 📡 Cảm biến + bật log debug (dưới) |
+
+> ⚠️ **Từ v1.3.0 lệnh notify được gọi ở chế độ chờ kết quả (`blocking=True`).** Trước đó gọi kiểu
+> "bắn rồi quên" nên lỗi xảy ra bên trong dịch vụ notify **rơi vào task nền và không bao giờ bay
+> về tích hợp** — hỏng âm thầm, log sạch trơn, không ai biết. Giờ lỗi được ghi ở mức **ERROR**
+> trong log HA và hiện thẳng trên panel.
+
 ## Hành trình bị hở — chốt tay bằng cách vuốt trái (v1.2.0)
 
 Mất wifi / cảm biến lag / pin yếu → có khi **tín hiệu đóng không tới HA**, lượt đó treo mãi ở

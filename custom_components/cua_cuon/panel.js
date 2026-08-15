@@ -114,6 +114,12 @@ h1{font-weight:700;font-size:20px;margin:0;letter-spacing:-.02em}
   background:color-mix(in srgb,var(--bad) 8%,var(--panel))}
 .health.warn .hd{color:var(--bad)}
 .health p{margin:6px 0 0}
+.health .ok{color:var(--closed);font-weight:600}
+.health .no{color:var(--bad);font-weight:600}
+.health .err{font-family:var(--mono);font-size:11px;color:var(--bad);word-break:break-word;
+  background:rgba(0,0,0,.25);border-radius:6px;padding:5px 8px;margin-top:6px;display:block}
+.health .row{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+.health .row .btn{padding:7px 11px;font-size:12.5px}
 
 .empty{text-align:center;padding:56px 20px;color:var(--faint)}
 .empty .big{font-size:44px;opacity:.5}
@@ -162,6 +168,7 @@ class CuaCuonPanel extends HTMLElement {
       </div>
       <div id="hero"></div>
       <div id="health"></div>
+      <div id="notify"></div>
       <div id="stats"></div>
       <div class="bar">
         <span class="count" id="count">—</span>
@@ -181,6 +188,9 @@ class CuaCuonPanel extends HTMLElement {
     this.$("#view").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-finish]");
       if (btn) this._finish(btn.getAttribute("data-finish"));
+    });
+    this.$("#notify").addEventListener("click", (e) => {
+      if (e.target.closest("#testnoti")) this._testNotify();
     });
     this._wireSwipe();
   }
@@ -276,6 +286,14 @@ class CuaCuonPanel extends HTMLElement {
   _hm(iso) {
     const d = new Date(iso);
     return `${this._two(d.getHours())}:${this._two(d.getMinutes())}`;
+  }
+  /** "08:13:40 15/08" — mốc thời gian đầy đủ để đối chiếu với log bên ngoài. */
+  _stamp(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    const t = this._two;
+    return `${t(d.getHours())}:${t(d.getMinutes())}:${t(d.getSeconds())} ${t(d.getDate())}/${t(d.getMonth() + 1)}`;
   }
   _dayKey(iso) {
     const d = new Date(iso);
@@ -375,10 +393,7 @@ class CuaCuonPanel extends HTMLElement {
     const changed = d.sensor_changed ? new Date(d.sensor_changed) : null;
     const stale = changed ? (Date.now() - changed.getTime()) / 3600000 : null; // giờ
     const warn = dead || (stale != null && stale >= 12);
-    const two = (n) => String(n).padStart(2, "0");
-    const stamp = changed
-      ? `${two(changed.getHours())}:${two(changed.getMinutes())}:${two(changed.getSeconds())} ${two(changed.getDate())}/${two(changed.getMonth() + 1)}`
-      : "—";
+    const stamp = this._stamp(d.sensor_changed);
     const label = dead ? "MẤT KẾT NỐI" : raw === "on" ? "mở" : raw === "off" ? "đóng" : raw;
 
     return `<div class="health${warn ? " warn" : ""}">
@@ -394,6 +409,70 @@ class CuaCuonPanel extends HTMLElement {
           : ""
       }
     </div>`;
+  }
+
+  /**
+   * Thẻ "sức khỏe kênh thông báo": dịch vụ notify còn tồn tại không, lần gửi gần nhất
+   * thành công hay lỗi gì. Kèm nút gửi thử để tách bạch "tích hợp không gọi" với
+   * "gọi rồi nhưng điện thoại không nhận".
+   */
+  _renderNotify() {
+    const d = this._data;
+    const last = d.notify_last;
+    const missing = d.notify_service && !d.notify_exists;
+    const failed = last && last.ok === false;
+    const warn = missing || failed || !d.notify_service || d.ready === false;
+
+    const rows = [];
+    rows.push(
+      d.notify_service
+        ? `<code>${d.notify_service}</code> · ${
+            d.notify_exists
+              ? `<span class="ok">dịch vụ còn tồn tại</span>`
+              : `<span class="no">KHÔNG CÒN dịch vụ này trong HA</span>`
+          }`
+        : `<span class="no">Chưa chọn dịch vụ thông báo</span>`
+    );
+    if (last) {
+      rows.push(
+        `Lần gửi cuối: <b>${this._stamp(last.at)}</b> · ${
+          last.ok ? `<span class="ok">thành công</span>` : `<span class="no">THẤT BẠI</span>`
+        }`
+      );
+    } else {
+      rows.push(`Lần gửi cuối: <b>chưa gửi lần nào</b> kể từ khi HA khởi động`);
+    }
+    if (d.ready === false) rows.push(`<span class="no">⚠ Tích hợp chưa đồng bộ xong</span>`);
+
+    return `<div class="health${warn ? " warn" : ""}">
+      <div class="hd">${warn ? "⚠" : "🔔"} Thông báo</div>
+      ${rows.join("<br>")}
+      ${last && last.err ? `<span class="err">${last.err}</span>` : ""}
+      ${
+        missing
+          ? `<p>Điện thoại đã đăng ký lại nên <b>tên dịch vụ đổi</b>. Vào
+             <b>Configure</b> chọn lại đúng <code>notify.mobile_app_…</code> đang có.</p>`
+          : ""
+      }
+      <div class="row"><button class="btn" id="testnoti">🔔 Gửi thử</button></div>
+    </div>`;
+  }
+
+  async _testNotify() {
+    const btn = this.$("#testnoti");
+    if (btn) { btn.disabled = true; btn.textContent = "Đang gửi…"; }
+    let res = null;
+    try {
+      res = await this._hass.connection.sendMessagePromise({ type: "cua_cuon/test_notify" });
+    } catch (e) {
+      res = { ok: false, err: String(e) };
+    }
+    await this._load();
+    alert(
+      res && res.ok
+        ? "Đã gửi xong, HA không báo lỗi.\n\nNếu điện thoại KHÔNG rung/hiện gì thì vấn đề nằm ở app HA trên máy (quyền thông báo, Focus, tiết kiệm pin) chứ không phải ở HA."
+        : `Gửi THẤT BẠI.\n\n${(res && res.err) || "không rõ lỗi"}`
+    );
   }
 
   _renderStats() {
@@ -450,6 +529,7 @@ class CuaCuonPanel extends HTMLElement {
     const n = sessions.length;
     this.$("#hero").innerHTML = this._renderHero();
     this.$("#health").innerHTML = this._renderHealth();
+    this.$("#notify").innerHTML = this._renderNotify();
     this.$("#stats").innerHTML = this._renderStats();
     this.$("#count").innerHTML = n
       ? `Nhật ký: <b>${n}</b> lượt gần nhất`
@@ -496,5 +576,5 @@ class CuaCuonPanel extends HTMLElement {
 if (!customElements.get("cua-cuon-panel")) {
   customElements.define("cua-cuon-panel", CuaCuonPanel);
 }
-console.info("%c CỬA CUỐN %c panel v3 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
+console.info("%c CỬA CUỐN %c panel v4 ", "background:#6aa9ff;color:#0f1420;border-radius:4px 0 0 4px;padding:2px 6px",
   "background:#26507f;color:#fff;border-radius:0 4px 4px 0;padding:2px 6px");

@@ -8,6 +8,7 @@ Theo dõi 1 entity cảm biến cửa (binary_sensor contact, hoặc cover). Khi
 Panel "Cửa cuốn" trên sidebar: trạng thái hiện tại (đang mở bao lâu) + nhật ký từng lượt
 (giờ mở, giờ đóng, thời lượng), gom nhóm theo ngày. Bấm vào thông báo -> mở thẳng panel.
 """
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
@@ -54,7 +55,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL = "/cua_cuon/panel.js"
-PANEL_VER = "3"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
+PANEL_VER = "4"  # tăng mỗi lần sửa panel.js để chống cache trình duyệt
 PANEL_URL_V = f"{PANEL_URL}?v={PANEL_VER}"
 PANEL_PATH = "cua-cuon"
 
@@ -78,6 +79,55 @@ def fmt_duration(seconds: float | None) -> str:
         return f"{minutes} phút {secs} giây" if secs and minutes < 10 else f"{minutes} phút"
     hours, minutes = divmod(minutes, 60)
     return f"{hours} giờ {minutes} phút" if minutes else f"{hours} giờ"
+
+
+async def send_notify(hass: HomeAssistant, message: str) -> dict:
+    """Gửi 1 thông báo và GHI LẠI kết quả để panel soi được.
+
+    Dùng `blocking=True`: gọi kiểu không chờ thì lỗi xảy ra bên trong dịch vụ notify
+    (điện thoại đã gỡ đăng ký, token hết hạn, máy chủ đẩy từ chối...) rơi vào task nền và
+    KHÔNG bao giờ bay về đây — hỏng âm thầm, không ai biết.
+    """
+    data = hass.data.setdefault(DOMAIN, {})
+    service = data.get("notify_service")
+    now = dt_util.utcnow().isoformat()
+
+    if not service:
+        result = {"at": now, "ok": False, "err": "Chưa chọn dịch vụ thông báo"}
+        data["notify_last"] = result
+        return result
+
+    svc = service.split(".")[-1]  # 'notify.mobile_app_x' -> 'mobile_app_x'
+    payload = {
+        "title": NOTIFY_TITLE,
+        "message": message,
+        "data": {
+            # Android + iOS: bấm thông báo -> mở panel "Cửa cuốn"
+            "clickAction": f"/{PANEL_PATH}",
+            "url": f"/{PANEL_PATH}",
+            "tag": NOTIFY_TAG,
+        },
+    }
+    try:
+        await asyncio.wait_for(
+            hass.services.async_call("notify", svc, payload, blocking=True), timeout=30
+        )
+        result = {"at": now, "ok": True, "msg": message}
+    except Exception as err:  # noqa: BLE001
+        result = {
+            "at": now,
+            "ok": False,
+            "msg": message,
+            "err": f"{type(err).__name__}: {err}",
+        }
+        _LOGGER.error(
+            "Cửa cuốn: GỬI THÔNG BÁO THẤT BẠI qua '%s': %s: %s",
+            service,
+            type(err).__name__,
+            err,
+        )
+    data["notify_last"] = result
+    return result
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -114,6 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_get_log)
         websocket_api.async_register_command(hass, ws_clear_log)
         websocket_api.async_register_command(hass, ws_finish)
+        websocket_api.async_register_command(hass, ws_test_notify)
 
     # Cấu hình hiệu lực = data (lúc cài) chồng bởi options (sửa sau qua Configure)
     conf = {**entry.data, **entry.options}
@@ -128,6 +179,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     debounce = float(conf.get(CONF_DEBOUNCE, DEFAULT_DEBOUNCE) or 0)
 
     data["sensor"] = sensor_id
+    data["notify_service"] = notify_service
     data["alert_minutes"] = alert_min
     data["ready"] = False  # chưa đồng bộ trạng thái đầu -> chưa xử lý sự kiện
 
@@ -151,27 +203,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     async def _notify(message: str) -> None:
-        if not notify_service:
-            return
-        svc = notify_service.split(".")[-1]  # 'notify.mobile_app_x' -> 'mobile_app_x'
-        try:
-            await hass.services.async_call(
-                "notify",
-                svc,
-                {
-                    "title": NOTIFY_TITLE,
-                    "message": message,
-                    "data": {
-                        # Android + iOS: bấm thông báo -> mở panel "Cửa cuốn"
-                        "clickAction": f"/{PANEL_PATH}",
-                        "url": f"/{PANEL_PATH}",
-                        "tag": NOTIFY_TAG,
-                    },
-                },
-                blocking=False,
-            )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Cửa cuốn: gửi thông báo lỗi: %s", err)
+        await send_notify(hass, message)
 
     # ---------- hẹn giờ cảnh báo "mở quá lâu" ----------
 
@@ -401,6 +433,7 @@ async def ws_get_log(hass: HomeAssistant, connection, msg) -> None:
     data = hass.data.get(DOMAIN, {})
     opened_at = data.get("open_at")
     sensor_id = data.get("sensor")
+    notify = data.get("notify_service")
     state = hass.states.get(sensor_id) if sensor_id else None
     connection.send_result(
         msg["id"],
@@ -415,8 +448,25 @@ async def ws_get_log(hass: HomeAssistant, connection, msg) -> None:
             "sensor_changed": state.last_changed.isoformat() if state else None,
             "sensor_updated": state.last_updated.isoformat() if state else None,
             "patched": int(data.get("patched", 0)),
+            # "sức khỏe" kênh thông báo
+            "ready": bool(data.get("ready")),
+            "notify_service": notify,
+            "notify_exists": bool(
+                notify and hass.services.has_service("notify", notify.split(".")[-1])
+            ),
+            "notify_last": data.get("notify_last"),
         },
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "cua_cuon/test_notify"})
+@websocket_api.async_response
+async def ws_test_notify(hass: HomeAssistant, connection, msg) -> None:
+    """Gửi 1 thông báo thử để kiểm tra kênh notify còn sống không."""
+    result = await send_notify(
+        hass, "🔧 Thử thông báo từ panel Cửa cuốn — nếu thấy tin này là kênh thông báo vẫn tốt."
+    )
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(
